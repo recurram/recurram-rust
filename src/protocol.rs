@@ -42,7 +42,7 @@ impl GoweCodec {
     }
 
     pub fn encode_message(&mut self, message: &Message) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(256);
         self.write_message(message, &mut out)?;
         Ok(out)
     }
