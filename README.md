@@ -21,7 +21,7 @@ From GitHub:
 
 ```toml
 [dependencies]
-recurram = { git = "https://github.com/recurram-team/recurram-rust.git" }
+recurram = { git = "https://github.com/recurram/recurram-rust.git" }
 ```
 
 From crates.io (if/when published):

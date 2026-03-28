@@ -29,5 +29,5 @@ Initial public release of the Rust implementation of Recurram.
 
 - Add missing crates.io package metadata (`description`, `license`) so `cargo publish` succeeds.
 
-[unreleased]: https://github.com/recurram-team/recurram-rust/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/recurram-team/recurram-rust/releases/tag/v0.1.0
+[unreleased]: https://github.com/recurram/recurram-rust/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/recurram/recurram-rust/releases/tag/v0.1.0
