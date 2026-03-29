@@ -158,6 +158,7 @@ pub struct SessionState {
     pub schemas: HashMap<u64, Schema>,
     pub last_schema_id: Option<u64>,
     pub previous_message: Option<Message>,
+    pub previous_message_size: Option<usize>,
     pub next_base_id: u64,
     pub next_template_id: u64,
     pub next_dictionary_id: u64,
@@ -180,6 +181,7 @@ impl Default for SessionState {
             schemas: HashMap::new(),
             last_schema_id: None,
             previous_message: None,
+            previous_message_size: None,
             next_base_id: 0,
             next_template_id: 0,
             next_dictionary_id: 0,
@@ -246,6 +248,7 @@ impl SessionState {
         self.schemas.clear();
         self.last_schema_id = None;
         self.previous_message = None;
+        self.previous_message_size = None;
         self.next_base_id = 0;
         self.next_template_id = 0;
         self.next_dictionary_id = 0;

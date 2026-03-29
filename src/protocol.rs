@@ -62,6 +62,7 @@ impl RecurramCodec {
             } => match self.apply_state_patch(base_ref, operations, literals) {
                 Ok(reconstructed) => {
                     self.state.previous_message = Some(reconstructed);
+                    self.state.previous_message_size = Some(bytes.len());
                 }
                 Err(err @ RecurramError::UnknownReference(_, _))
                 | Err(err @ RecurramError::StatelessRetryRequired(_, _)) => return Err(err),
@@ -73,10 +74,12 @@ impl RecurramCodec {
             Message::TemplateBatch { .. } => {
                 if self.state.previous_message.is_none() {
                     self.state.previous_message = Some(msg.clone());
+                    self.state.previous_message_size = Some(bytes.len());
                 }
             }
             _ => {
                 self.state.previous_message = Some(msg.clone());
+                self.state.previous_message_size = Some(bytes.len());
             }
         }
         Ok(msg)
@@ -86,6 +89,7 @@ impl RecurramCodec {
         let message = self.message_for_value(value);
         let bytes = self.encode_message(&message)?;
         self.state.previous_message = Some(message);
+        self.state.previous_message_size = Some(bytes.len());
         Ok(bytes)
     }
 
@@ -177,12 +181,16 @@ impl RecurramCodec {
             .get_keys(shape_id)
             .map(|k| k.to_vec())
             .unwrap_or_default();
+        let entry_index = entries
+            .iter()
+            .map(|(key, value)| (key.as_str(), value))
+            .collect::<std::collections::HashMap<_, _>>();
         let mut values = Vec::with_capacity(keys.len());
         let mut presence = Vec::with_capacity(keys.len());
         for key in keys {
-            if let Some((_, value)) = entries.iter().find(|(k, _)| *k == key) {
+            if let Some(value) = entry_index.get(key.as_str()) {
                 presence.push(true);
-                values.push(value.clone());
+                values.push((*value).clone());
             } else {
                 presence.push(false);
             }
@@ -1931,14 +1939,15 @@ impl SessionEncoder {
         let bytes = self.codec.encode_message(&message)?;
         self.codec.state.last_schema_id = Some(schema.schema_id);
         self.codec.state.previous_message = Some(message);
+        self.codec.state.previous_message_size = Some(bytes.len());
         self.record_full_message_as_base();
         Ok(bytes)
     }
 
     pub fn encode_batch(&mut self, values: &[Value]) -> Result<Vec<u8>> {
-        let rows = rows_from_values(values);
         let message = if values.len() >= 16 {
-            let mut columns = rows_to_columns(&rows);
+            let mut columns = columns_from_map_values(values)
+                .unwrap_or_else(|| rows_to_columns(&rows_from_values(values)));
             if self.codec.state.options.enable_trained_dictionary {
                 apply_dictionary_references(&mut self.codec.state, &mut columns);
             }
@@ -1947,10 +1956,13 @@ impl SessionEncoder {
                 columns,
             }
         } else {
-            Message::RowBatch { rows }
+            Message::RowBatch {
+                rows: rows_from_values(values),
+            }
         };
         let bytes = self.codec.encode_message(&message)?;
         self.codec.state.previous_message = Some(message);
+        self.codec.state.previous_message_size = Some(bytes.len());
         self.record_full_message_as_base();
         Ok(bytes)
     }
@@ -1976,7 +1988,11 @@ impl SessionEncoder {
             .len()
             .max(message_fields(&current_msg).len())
             .max(1);
-        let prev_size = encoded_size(&prev);
+        let prev_size = self
+            .codec
+            .state
+            .previous_message_size
+            .unwrap_or_else(|| encoded_size(&prev));
         let patch_size = estimated_patch_size_with_base(BaseRef::Previous, &ops);
         let patch_ratio = changed as f64 / total_fields as f64;
         if patch_ratio <= 0.10 && patch_size < prev_size {
@@ -1987,6 +2003,7 @@ impl SessionEncoder {
             };
             let bytes = self.codec.encode_message(&patch)?;
             self.codec.state.previous_message = Some(current_msg);
+            self.codec.state.previous_message_size = Some(prev_size);
             return Ok(bytes);
         }
 
@@ -2002,8 +2019,8 @@ impl SessionEncoder {
         if !has_uniform_micro_batch_shape(values) {
             return self.encode_batch(values);
         }
-        let rows = rows_from_values(values);
-        let mut columns = rows_to_columns(&rows);
+        let mut columns = columns_from_map_values(values)
+            .unwrap_or_else(|| rows_to_columns(&rows_from_values(values)));
         if self.codec.state.options.enable_trained_dictionary {
             apply_dictionary_references(&mut self.codec.state, &mut columns);
         }
@@ -2037,6 +2054,7 @@ impl SessionEncoder {
             count: values.len() as u64,
             columns,
         });
+        self.codec.state.previous_message_size = Some(bytes.len());
         Ok(bytes)
     }
 
@@ -2125,10 +2143,12 @@ fn rows_from_values(values: &[Value]) -> Vec<Vec<Value>> {
     }
 
     let mut key_order = Vec::<String>::new();
+    let mut key_index = std::collections::HashMap::<String, usize>::new();
     for value in values {
         if let Value::Map(entries) = value {
             for (key, _) in entries {
-                if !key_order.iter().any(|k| k == key) {
+                if !key_index.contains_key(key) {
+                    key_index.insert(key.clone(), key_order.len());
                     key_order.push(key.clone());
                 }
             }
@@ -2138,19 +2158,92 @@ fn rows_from_values(values: &[Value]) -> Vec<Vec<Value>> {
     values
         .iter()
         .map(|value| {
-            let mut row = Vec::with_capacity(key_order.len());
+            let mut row = vec![Value::Null; key_order.len()];
             if let Value::Map(entries) = value {
-                for key in &key_order {
-                    let value = entries
-                        .iter()
-                        .find_map(|(k, v)| if k == key { Some(v.clone()) } else { None })
-                        .unwrap_or(Value::Null);
-                    row.push(value);
+                for (key, entry_value) in entries {
+                    if let Some(index) = key_index.get(key) {
+                        row[*index] = entry_value.clone();
+                    }
                 }
             }
             row
         })
         .collect()
+}
+
+fn columns_from_map_values(values: &[Value]) -> Option<Vec<Column>> {
+    if !values.iter().all(|value| matches!(value, Value::Map(_))) {
+        return None;
+    }
+
+    let mut key_order = Vec::<String>::new();
+    let mut key_index = std::collections::HashMap::<String, usize>::new();
+    let mut column_values = Vec::<Vec<Value>>::new();
+    let mut column_presence = Vec::<Vec<bool>>::new();
+
+    for (row_idx, value) in values.iter().enumerate() {
+        let Value::Map(entries) = value else {
+            return None;
+        };
+
+        let mut present = vec![false; key_order.len()];
+        for (key, entry_value) in entries {
+            let column_idx = if let Some(index) = key_index.get(key) {
+                *index
+            } else {
+                let index = key_order.len();
+                key_order.push(key.clone());
+                key_index.insert(key.clone(), index);
+                column_values.push(vec![Value::Null; row_idx]);
+                column_presence.push(vec![false; row_idx]);
+                present.push(false);
+                index
+            };
+            column_values[column_idx].push(entry_value.clone());
+            column_presence[column_idx].push(true);
+            present[column_idx] = true;
+        }
+
+        for column_idx in 0..key_order.len() {
+            if present[column_idx] {
+                continue;
+            }
+            column_values[column_idx].push(Value::Null);
+            column_presence[column_idx].push(false);
+        }
+    }
+
+    let mut columns = Vec::with_capacity(key_order.len());
+    for (field_id, values) in column_values.into_iter().enumerate() {
+        let present_bits = &column_presence[field_id];
+        let null_count = values
+            .iter()
+            .filter(|value| matches!(value, Value::Null))
+            .count();
+        let optional_count = values.len();
+        let (null_strategy, presence) = if null_count == 0 {
+            (NullStrategy::AllPresentElided, None)
+        } else if null_count <= optional_count / 4 {
+            (
+                NullStrategy::InvertedPresenceBitmap,
+                Some(present_bits.iter().map(|present| !present).collect()),
+            )
+        } else {
+            (NullStrategy::PresenceBitmap, Some(present_bits.clone()))
+        };
+        let non_null_values = strip_nulls(values);
+        let (codec, typed_values) = infer_column_codec_and_values(&non_null_values);
+        columns.push(Column {
+            field_id: field_id as u64,
+            null_strategy,
+            presence,
+            codec,
+            dictionary_id: None,
+            values: typed_values,
+        });
+    }
+
+    Some(columns)
 }
 
 fn has_uniform_micro_batch_shape(values: &[Value]) -> bool {
@@ -2224,12 +2317,80 @@ fn encoded_size(message: &Message) -> usize {
 }
 
 fn estimated_patch_size_with_base(base_ref: BaseRef, ops: &[PatchOperation]) -> usize {
-    let patch = Message::StatePatch {
-        base_ref,
-        operations: ops.to_vec(),
-        literals: Vec::new(),
-    };
-    encoded_size(&patch)
+    1 + estimate_base_ref_size(base_ref)
+        + varuint_size(ops.len() as u64)
+        + ops
+            .iter()
+            .map(|operation| {
+                varuint_size(operation.field_id)
+                    + 1
+                    + 1
+                    + operation
+                        .value
+                        .as_ref()
+                        .map(estimate_value_size)
+                        .unwrap_or(0)
+            })
+            .sum::<usize>()
+        + 1
+}
+
+fn estimate_base_ref_size(base_ref: BaseRef) -> usize {
+    match base_ref {
+        BaseRef::Previous => 1,
+        BaseRef::BaseId(id) => 1 + varuint_size(id),
+    }
+}
+
+fn estimate_value_size(value: &Value) -> usize {
+    match value {
+        Value::Null => 1,
+        Value::Bool(_) => 1,
+        Value::I64(v) => 1 + smallest_u64_size(encode_zigzag(*v)),
+        Value::U64(v) => 1 + smallest_u64_size(*v),
+        Value::F64(_) => 1 + 8,
+        Value::String(v) => 1 + 1 + encoded_string_size(v),
+        Value::Binary(v) => 1 + encoded_bytes_size(v.len()),
+        Value::Array(values) => {
+            1 + varuint_size(values.len() as u64)
+                + values.iter().map(estimate_value_size).sum::<usize>()
+        }
+        Value::Map(entries) => {
+            1 + varuint_size(entries.len() as u64)
+                + entries
+                    .iter()
+                    .map(|(key, entry_value)| {
+                        encoded_string_size(key) + estimate_value_size(entry_value)
+                    })
+                    .sum::<usize>()
+        }
+    }
+}
+
+fn encoded_bytes_size(len: usize) -> usize {
+    varuint_size(len as u64) + len
+}
+
+fn encoded_string_size(value: &str) -> usize {
+    encoded_bytes_size(value.len())
+}
+
+fn varuint_size(mut value: u64) -> usize {
+    let mut size = 1usize;
+    while value >= 0x80 {
+        value >>= 7;
+        size += 1;
+    }
+    size
+}
+
+fn smallest_u64_size(value: u64) -> usize {
+    match value {
+        0..=0xFF => 2,
+        0x100..=0xFFFF => 3,
+        0x1_0000..=0xFFFF_FFFF => 5,
+        _ => 9,
+    }
 }
 
 fn typed_vector_to_value(vector: TypedVector) -> Value {
@@ -2294,15 +2455,26 @@ fn rows_to_columns(rows: &[Vec<Value>]) -> Vec<Column> {
         return Vec::new();
     }
     let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let row_count = rows.len();
+    let mut column_values = (0..width)
+        .map(|_| Vec::with_capacity(row_count))
+        .collect::<Vec<_>>();
+    let mut column_presence = (0..width)
+        .map(|_| Vec::with_capacity(row_count))
+        .collect::<Vec<_>>();
+
+    for row in rows {
+        for col_idx in 0..width {
+            let value = row.get(col_idx).cloned().unwrap_or(Value::Null);
+            column_presence[col_idx].push(!matches!(value, Value::Null));
+            column_values[col_idx].push(value);
+        }
+    }
+
     let mut cols = Vec::with_capacity(width);
     for col_idx in 0..width {
-        let mut values = Vec::new();
-        let mut present_bits = Vec::new();
-        for row in rows {
-            let value = row.get(col_idx).cloned().unwrap_or(Value::Null);
-            present_bits.push(!matches!(value, Value::Null));
-            values.push(value);
-        }
+        let values = std::mem::take(&mut column_values[col_idx]);
+        let present_bits = std::mem::take(&mut column_presence[col_idx]);
         let null_count = values.iter().filter(|v| matches!(v, Value::Null)).count();
         let optional_count = values.len();
         let (null_strategy, presence) = if null_count == 0 {
