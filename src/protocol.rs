@@ -3589,10 +3589,13 @@ fn template_descriptor_from_columns(template_id: u64, columns: &[Column]) -> Tem
     }
 }
 
-fn find_template_id(
-    templates: &std::collections::HashMap<u64, TemplateDescriptor>,
+fn find_template_id<S>(
+    templates: &std::collections::HashMap<u64, TemplateDescriptor, S>,
     probe: &TemplateDescriptor,
-) -> Option<u64> {
+) -> Option<u64>
+where
+    S: std::hash::BuildHasher,
+{
     templates
         .iter()
         .filter_map(|(id, desc)| {

@@ -1,6 +1,11 @@
 use crate::error::{RecurramError, Result};
 
+#[inline(always)]
 pub fn encode_varuint(mut value: u64, out: &mut Vec<u8>) {
+    if value < 0x80 {
+        out.push(value as u8);
+        return;
+    }
     loop {
         let mut byte = (value & 0x7F) as u8;
         value >>= 7;
@@ -14,19 +19,23 @@ pub fn encode_varuint(mut value: u64, out: &mut Vec<u8>) {
     }
 }
 
+#[inline(always)]
 pub fn encode_zigzag(value: i64) -> u64 {
     ((value << 1) ^ (value >> 63)) as u64
 }
 
+#[inline(always)]
 pub fn decode_zigzag(value: u64) -> i64 {
     ((value >> 1) as i64) ^ -((value & 1) as i64)
 }
 
+#[inline(always)]
 pub fn encode_bytes(bytes: &[u8], out: &mut Vec<u8>) {
     encode_varuint(bytes.len() as u64, out);
     out.extend_from_slice(bytes);
 }
 
+#[inline(always)]
 pub fn encode_string(value: &str, out: &mut Vec<u8>) {
     encode_bytes(value.as_bytes(), out);
 }
@@ -88,6 +97,7 @@ impl<'a> Reader<'a> {
         Ok(slice)
     }
 
+    #[inline(always)]
     pub fn read_varuint(&mut self) -> Result<u64> {
         let mut shift = 0u32;
         let mut result = 0u64;
@@ -115,8 +125,10 @@ impl<'a> Reader<'a> {
     }
 
     pub fn read_string(&mut self) -> Result<String> {
-        let bytes = self.read_bytes()?;
-        String::from_utf8(bytes).map_err(|_| RecurramError::Utf8Error)
+        let len = self.read_varuint()? as usize;
+        let bytes = self.read_exact(len)?;
+        let value = std::str::from_utf8(bytes).map_err(|_| RecurramError::Utf8Error)?;
+        Ok(value.to_owned())
     }
 
     pub fn read_bitmap(&mut self) -> Result<Vec<bool>> {

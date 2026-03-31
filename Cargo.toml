@@ -6,3 +6,4 @@ description = "Recurram: schema-aware wire format with stateful transport."
 license = "MIT"
 
 [dependencies]
+ahash = "0.8"
