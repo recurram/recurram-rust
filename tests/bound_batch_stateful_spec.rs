@@ -1,7 +1,7 @@
 use twilic as twilic_rust;
 
 use twilic_rust::{
-    TwilicCodec, TwilicError, SessionEncoder,
+    SessionEncoder, TwilicCodec, TwilicError,
     model::{
         BaseRef, Column, Message, MessageKind, NullStrategy, TypedVectorData, Value, VectorCodec,
     },
@@ -416,9 +416,7 @@ fn invalid_dictionary_profile_hash_is_rejected() {
     let mut dec = TwilicCodec::default();
     assert!(matches!(
         dec.decode_message(&bytes),
-        Err(TwilicError::InvalidData(
-            "dictionary profile hash mismatch"
-        ))
+        Err(TwilicError::InvalidData("dictionary profile hash mismatch"))
     ));
 }
 

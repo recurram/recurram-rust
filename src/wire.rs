@@ -1,4 +1,4 @@
-use crate::error::{TwilicError, Result};
+use crate::error::{Result, TwilicError};
 
 #[inline(always)]
 pub fn encode_varuint(mut value: u64, out: &mut Vec<u8>) {

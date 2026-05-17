@@ -6,9 +6,9 @@ pub mod session;
 pub mod v2;
 pub mod wire;
 
-pub use error::{TwilicError, Result};
+pub use error::{Result, TwilicError};
 pub use model::{Message, Schema, Value};
-pub use protocol::{TwilicCodec, SessionEncoder};
+pub use protocol::{SessionEncoder, TwilicCodec};
 pub use session::{SessionOptions, UnknownReferencePolicy};
 
 pub fn encode(value: &Value) -> Result<Vec<u8>> {

@@ -3,7 +3,7 @@ use crate::{
         decode_f64_vector, decode_i64_vector, decode_u64_vector, encode_f64_vector,
         encode_i64_vector, encode_u64_vector,
     },
-    error::{TwilicError, Result},
+    error::{Result, TwilicError},
     model::{
         BaseRef, Column, ControlMessage, ControlOpcode, ControlStreamCodec, ElementType, KeyRef,
         MapEntry, Message, MessageKind, NullStrategy, PatchOpcode, PatchOperation, Schema,
@@ -122,9 +122,7 @@ impl TwilicCodec {
     fn reference_error(&self, kind: &'static str, id: u64) -> TwilicError {
         match self.state.options.unknown_reference_policy {
             UnknownReferencePolicy::FailFast => TwilicError::UnknownReference(kind, id),
-            UnknownReferencePolicy::StatelessRetry => {
-                TwilicError::StatelessRetryRequired(kind, id)
-            }
+            UnknownReferencePolicy::StatelessRetry => TwilicError::StatelessRetryRequired(kind, id),
         }
     }
 
@@ -472,8 +470,7 @@ impl TwilicCodec {
 
     fn read_message(&mut self, reader: &mut Reader<'_>) -> Result<Message> {
         let kind_byte = reader.read_u8()?;
-        let kind =
-            MessageKind::from_byte(kind_byte).ok_or(TwilicError::InvalidKind(kind_byte))?;
+        let kind = MessageKind::from_byte(kind_byte).ok_or(TwilicError::InvalidKind(kind_byte))?;
         let message = match kind {
             MessageKind::Scalar => Message::Scalar(self.read_value(reader)?),
             MessageKind::Array => {
@@ -559,9 +556,12 @@ impl TwilicCodec {
                 let encoding_mode = reader.read_u8()?;
                 let mut fields = Vec::with_capacity(len);
                 if encoding_mode == 1 {
-                    let effective_schema_id = schema_id.or(self.state.last_schema_id).ok_or(
-                        TwilicError::InvalidData("schema object requires schema id in context"),
-                    )?;
+                    let effective_schema_id =
+                        schema_id
+                            .or(self.state.last_schema_id)
+                            .ok_or(TwilicError::InvalidData(
+                                "schema object requires schema id in context",
+                            ))?;
                     let schema = self
                         .state
                         .schemas
@@ -1904,9 +1904,7 @@ impl SessionEncoder {
                         if let Some(default) = &field.default_value {
                             fields.push(default.clone());
                         } else {
-                            return Err(TwilicError::InvalidData(
-                                "missing required schema field",
-                            ));
+                            return Err(TwilicError::InvalidData("missing required schema field"));
                         }
                     }
                 }
@@ -2092,9 +2090,7 @@ fn schema_present_field_indices(schema: &Schema, presence: Option<&[bool]>) -> R
     if let Some(bits) = presence
         && bits.len() != optional_total
     {
-        return Err(TwilicError::InvalidData(
-            "schema optional presence length",
-        ));
+        return Err(TwilicError::InvalidData("schema optional presence length"));
     }
     let mut indices = Vec::new();
     let mut optional_idx = 0usize;
@@ -2414,9 +2410,7 @@ fn entries_to_map(entries: Vec<MapEntry>, state: &SessionState) -> Result<Vec<(S
                 .key_table
                 .get_value(id)
                 .ok_or(match state.options.unknown_reference_policy {
-                    UnknownReferencePolicy::FailFast => {
-                        TwilicError::UnknownReference("key_id", id)
-                    }
+                    UnknownReferencePolicy::FailFast => TwilicError::UnknownReference("key_id", id),
                     UnknownReferencePolicy::StatelessRetry => {
                         TwilicError::StatelessRetryRequired("key_id", id)
                     }
@@ -3093,9 +3087,9 @@ fn control_huffman_decode_bytes(input: &[u8]) -> Result<Vec<u8>> {
                             break;
                         }
                         HuffNode::Internal { left, right } => {
-                            let byte = *bitstream.get(byte_idx).ok_or(
-                                TwilicError::InvalidData("control stream huffman underflow"),
-                            )?;
+                            let byte = *bitstream.get(byte_idx).ok_or(TwilicError::InvalidData(
+                                "control stream huffman underflow",
+                            ))?;
                             let bit = (byte >> bit_idx) & 1;
                             bit_idx += 1;
                             if bit_idx == 8 {
@@ -3224,9 +3218,7 @@ fn control_fse_frame_decode(input: &[u8]) -> Result<Vec<u8>> {
     let len = reader.read_varuint()? as usize;
     let used = reader.read_varuint()? as usize;
     if used > 256 || used > table_size as usize {
-        return Err(TwilicError::InvalidData(
-            "control stream fse used symbols",
-        ));
+        return Err(TwilicError::InvalidData("control stream fse used symbols"));
     }
 
     let mut freqs = [0u16; 256];
@@ -3244,8 +3236,8 @@ fn control_fse_frame_decode(input: &[u8]) -> Result<Vec<u8>> {
         if freq == 0 || freq > table_size as u64 {
             return Err(TwilicError::InvalidData("control stream fse freq"));
         }
-        let freq_u16 = u16::try_from(freq)
-            .map_err(|_| TwilicError::InvalidData("control stream fse freq"))?;
+        let freq_u16 =
+            u16::try_from(freq).map_err(|_| TwilicError::InvalidData("control stream fse freq"))?;
         freqs[symbol] = freq_u16;
         sum = sum
             .checked_add(u32::from(freq_u16))
@@ -3288,9 +3280,9 @@ fn control_fse_frame_decode(input: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(len);
     for _ in 0..len {
         let slot = (state & mask) as usize;
-        let symbol = *decode_table.get(slot).ok_or(TwilicError::InvalidData(
-            "control stream fse decode table",
-        ))?;
+        let symbol = *decode_table
+            .get(slot)
+            .ok_or(TwilicError::InvalidData("control stream fse decode table"))?;
         out.push(symbol);
 
         let freq = u32::from(freqs[symbol as usize]);
@@ -3479,9 +3471,9 @@ fn unpack_fixed_width_u8(bytes: &[u8], len: usize, width: u8) -> Result<Vec<u8>>
     let mask = (1u32 << width) - 1;
     while out.len() < len {
         while acc_bits < width {
-            let b = *bytes.get(idx).ok_or(TwilicError::InvalidData(
-                "control stream bitpack underflow",
-            ))?;
+            let b = *bytes
+                .get(idx)
+                .ok_or(TwilicError::InvalidData("control stream bitpack underflow"))?;
             idx += 1;
             acc |= u32::from(b) << acc_bits;
             acc_bits += 8;
@@ -3652,9 +3644,7 @@ fn merge_template_columns(
         }
     }
     if changed_iter.next().is_some() {
-        return Err(TwilicError::InvalidData(
-            "template changed column overflow",
-        ));
+        return Err(TwilicError::InvalidData("template changed column overflow"));
     }
     Ok(out)
 }

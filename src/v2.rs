@@ -1,7 +1,7 @@
 use ahash::HashMap;
 
 use crate::{
-    error::{TwilicError, Result},
+    error::{Result, TwilicError},
     model::Value,
     wire::{Reader, encode_varuint},
 };

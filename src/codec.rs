@@ -1,5 +1,5 @@
 use crate::{
-    error::{TwilicError, Result},
+    error::{Result, TwilicError},
     model::VectorCodec,
     wire::{Reader, decode_zigzag, encode_varuint, encode_zigzag},
 };

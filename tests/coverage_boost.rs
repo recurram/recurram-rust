@@ -1,7 +1,7 @@
 use twilic as twilic_rust;
 
 use twilic_rust::{
-    TwilicCodec, TwilicError, SessionEncoder,
+    SessionEncoder, TwilicCodec, TwilicError,
     codec::{
         decode_f64_vector, decode_i64_vector, decode_u64_vector, encode_f64_vector,
         encode_i64_vector, encode_u64_vector,

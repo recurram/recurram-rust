@@ -57,10 +57,7 @@ fn for_u64_overflow_is_rejected() {
     let mut reader = Reader::new(&bytes);
     let err =
         decode_u64_vector(&mut reader, VectorCodec::ForBitpack).expect_err("overflow expected");
-    assert!(matches!(
-        err,
-        TwilicError::InvalidData("u64 FOR overflow")
-    ));
+    assert!(matches!(err, TwilicError::InvalidData("u64 FOR overflow")));
 }
 
 #[test]

@@ -159,8 +159,5 @@ fn reset_state_clears_shape_resolution() {
     let err = codec
         .decode_value(&shaped_bytes)
         .expect_err("shape should be unknown");
-    assert!(matches!(
-        err,
-        TwilicError::UnknownReference("shape_id", 7)
-    ));
+    assert!(matches!(err, TwilicError::UnknownReference("shape_id", 7)));
 }
