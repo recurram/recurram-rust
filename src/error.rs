@@ -1,7 +1,7 @@
 use core::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecurramError {
+pub enum TwilicError {
     UnexpectedEof,
     InvalidKind(u8),
     InvalidTag(u8),
@@ -11,7 +11,7 @@ pub enum RecurramError {
     StatelessRetryRequired(&'static str, u64),
 }
 
-impl fmt::Display for RecurramError {
+impl fmt::Display for TwilicError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnexpectedEof => write!(f, "unexpected end of input"),
@@ -27,6 +27,6 @@ impl fmt::Display for RecurramError {
     }
 }
 
-impl std::error::Error for RecurramError {}
+impl std::error::Error for TwilicError {}
 
-pub type Result<T> = core::result::Result<T, RecurramError>;
+pub type Result<T> = core::result::Result<T, TwilicError>;

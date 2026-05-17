@@ -3,7 +3,7 @@ use crate::{
         decode_f64_vector, decode_i64_vector, decode_u64_vector, encode_f64_vector,
         encode_i64_vector, encode_u64_vector,
     },
-    error::{RecurramError, Result},
+    error::{TwilicError, Result},
     model::{
         BaseRef, Column, ControlMessage, ControlOpcode, ControlStreamCodec, ElementType, KeyRef,
         MapEntry, Message, MessageKind, NullStrategy, PatchOpcode, PatchOperation, Schema,
@@ -30,11 +30,11 @@ const TAG_ARRAY: u8 = 8;
 const TAG_MAP: u8 = 9;
 
 #[derive(Debug, Clone, Default)]
-pub struct RecurramCodec {
+pub struct TwilicCodec {
     pub state: SessionState,
 }
 
-impl RecurramCodec {
+impl TwilicCodec {
     pub fn with_options(options: SessionOptions) -> Self {
         Self {
             state: SessionState::with_options(options),
@@ -51,7 +51,7 @@ impl RecurramCodec {
         let mut reader = Reader::new(bytes);
         let msg = self.read_message(&mut reader)?;
         if !reader.is_eof() {
-            return Err(RecurramError::InvalidData("trailing bytes in message"));
+            return Err(TwilicError::InvalidData("trailing bytes in message"));
         }
         match &msg {
             Message::Control(_) => {}
@@ -64,9 +64,9 @@ impl RecurramCodec {
                     self.state.previous_message = Some(reconstructed);
                     self.state.previous_message_size = Some(bytes.len());
                 }
-                Err(err @ RecurramError::UnknownReference(_, _))
-                | Err(err @ RecurramError::StatelessRetryRequired(_, _)) => return Err(err),
-                Err(RecurramError::InvalidData(
+                Err(err @ TwilicError::UnknownReference(_, _))
+                | Err(err @ TwilicError::StatelessRetryRequired(_, _)) => return Err(err),
+                Err(TwilicError::InvalidData(
                     "state patch reconstruction unsupported for this message kind",
                 )) => {}
                 Err(err) => return Err(err),
@@ -113,17 +113,17 @@ impl RecurramCodec {
                 Ok(Value::Map(shape_values_to_map(keys, presence, values)))
             }
             Message::TypedVector(vec) => Ok(typed_vector_to_value(vec)),
-            _ => Err(RecurramError::InvalidData(
+            _ => Err(TwilicError::InvalidData(
                 "decode_value expects scalar/array/map/vector message",
             )),
         }
     }
 
-    fn reference_error(&self, kind: &'static str, id: u64) -> RecurramError {
+    fn reference_error(&self, kind: &'static str, id: u64) -> TwilicError {
         match self.state.options.unknown_reference_policy {
-            UnknownReferencePolicy::FailFast => RecurramError::UnknownReference(kind, id),
+            UnknownReferencePolicy::FailFast => TwilicError::UnknownReference(kind, id),
             UnknownReferencePolicy::StatelessRetry => {
-                RecurramError::StatelessRetryRequired(kind, id)
+                TwilicError::StatelessRetryRequired(kind, id)
             }
         }
     }
@@ -473,7 +473,7 @@ impl RecurramCodec {
     fn read_message(&mut self, reader: &mut Reader<'_>) -> Result<Message> {
         let kind_byte = reader.read_u8()?;
         let kind =
-            MessageKind::from_byte(kind_byte).ok_or(RecurramError::InvalidKind(kind_byte))?;
+            MessageKind::from_byte(kind_byte).ok_or(TwilicError::InvalidKind(kind_byte))?;
         let message = match kind {
             MessageKind::Scalar => Message::Scalar(self.read_value(reader)?),
             MessageKind::Array => {
@@ -552,7 +552,7 @@ impl RecurramCodec {
                 let schema_id = match has_schema {
                     0 => None,
                     1 => Some(reader.read_varuint()?),
-                    _ => return Err(RecurramError::InvalidData("schema flag")),
+                    _ => return Err(TwilicError::InvalidData("schema flag")),
                 };
                 let presence = self.read_presence(reader)?;
                 let len = reader.read_varuint()? as usize;
@@ -560,7 +560,7 @@ impl RecurramCodec {
                 let mut fields = Vec::with_capacity(len);
                 if encoding_mode == 1 {
                     let effective_schema_id = schema_id.or(self.state.last_schema_id).ok_or(
-                        RecurramError::InvalidData("schema object requires schema id in context"),
+                        TwilicError::InvalidData("schema object requires schema id in context"),
                     )?;
                     let schema = self
                         .state
@@ -578,7 +578,7 @@ impl RecurramCodec {
                         self.state.last_schema_id = Some(id);
                     }
                 } else {
-                    return Err(RecurramError::InvalidData("schema object encoding mode"));
+                    return Err(TwilicError::InvalidData("schema object encoding mode"));
                 }
                 Message::SchemaObject {
                     schema_id,
@@ -622,7 +622,7 @@ impl RecurramCodec {
                     let field_id = reader.read_varuint()?;
                     let op_byte = reader.read_u8()?;
                     let opcode = PatchOpcode::from_byte(op_byte)
-                        .ok_or(RecurramError::InvalidData("patch opcode"))?;
+                        .ok_or(TwilicError::InvalidData("patch opcode"))?;
                     let has_value = reader.read_u8()?;
                     let value = if has_value == 1 {
                         Some(self.read_value(reader)?)
@@ -693,7 +693,7 @@ impl RecurramCodec {
             }
             MessageKind::ControlStream => {
                 let codec = ControlStreamCodec::from_byte(reader.read_u8()?)
-                    .ok_or(RecurramError::InvalidData("control stream codec"))?;
+                    .ok_or(TwilicError::InvalidData("control stream codec"))?;
                 let payload = self.read_control_stream_payload(codec, reader)?;
                 Message::ControlStream { codec, payload }
             }
@@ -816,7 +816,7 @@ impl RecurramCodec {
             }
             TAG_STRING => {
                 let mode = StringMode::from_byte(reader.read_u8()?)
-                    .ok_or(RecurramError::InvalidData("string mode"))?;
+                    .ok_or(TwilicError::InvalidData("string mode"))?;
                 match mode {
                     StringMode::Empty => Ok(Value::String(String::new())),
                     StringMode::Literal => {
@@ -843,7 +843,7 @@ impl RecurramCodec {
                             .get_value(base_id)
                             .ok_or_else(|| self.reference_error("string_id", base_id))?;
                         if prefix_len > base.len() || !base.is_char_boundary(prefix_len) {
-                            return Err(RecurramError::InvalidData("prefix_delta prefix_len"));
+                            return Err(TwilicError::InvalidData("prefix_delta prefix_len"));
                         }
                         let prefix = &base[..prefix_len];
                         let value = format!("{prefix}{suffix}");
@@ -852,7 +852,7 @@ impl RecurramCodec {
                     }
                     StringMode::InlineEnum => {
                         let code = reader.read_varuint()? as usize;
-                        let identity = field_identity.ok_or(RecurramError::InvalidData(
+                        let identity = field_identity.ok_or(TwilicError::InvalidData(
                             "inline enum without field context",
                         ))?;
                         let values = self
@@ -887,7 +887,7 @@ impl RecurramCodec {
                 }
                 Ok(Value::Map(entries))
             }
-            other => Err(RecurramError::InvalidTag(other)),
+            other => Err(TwilicError::InvalidTag(other)),
         }
     }
 
@@ -900,7 +900,7 @@ impl RecurramCodec {
     ) -> Result<()> {
         let indices = schema_present_field_indices(schema, presence)?;
         if indices.len() != fields.len() {
-            return Err(RecurramError::InvalidData("schema field count mismatch"));
+            return Err(TwilicError::InvalidData("schema field count mismatch"));
         }
         for (idx, value) in indices.into_iter().zip(fields.iter()) {
             self.write_schema_field_value(&schema.fields[idx], value, out)?;
@@ -917,7 +917,7 @@ impl RecurramCodec {
     ) -> Result<Vec<Value>> {
         let indices = schema_present_field_indices(schema, presence)?;
         if indices.len() != expected_len {
-            return Err(RecurramError::InvalidData("schema field count mismatch"));
+            return Err(TwilicError::InvalidData("schema field count mismatch"));
         }
         let mut out = Vec::with_capacity(expected_len);
         for idx in indices {
@@ -936,7 +936,7 @@ impl RecurramCodec {
         match ty.as_str() {
             "bool" => match value {
                 Value::Bool(v) => out.push(if *v { 1 } else { 0 }),
-                _ => return Err(RecurramError::InvalidData("schema bool type mismatch")),
+                _ => return Err(TwilicError::InvalidData("schema bool type mismatch")),
             },
             "u64" => {
                 if let Value::U64(v) = value {
@@ -955,7 +955,7 @@ impl RecurramCodec {
                         write_smallest_u64(*v, out);
                     }
                 } else {
-                    return Err(RecurramError::InvalidData("schema u64 type mismatch"));
+                    return Err(TwilicError::InvalidData("schema u64 type mismatch"));
                 }
             }
             "i64" => {
@@ -975,12 +975,12 @@ impl RecurramCodec {
                         write_smallest_u64(encode_zigzag(*v), out);
                     }
                 } else {
-                    return Err(RecurramError::InvalidData("schema i64 type mismatch"));
+                    return Err(TwilicError::InvalidData("schema i64 type mismatch"));
                 }
             }
             "f64" => match value {
                 Value::F64(v) => out.extend_from_slice(&v.to_le_bytes()),
-                _ => return Err(RecurramError::InvalidData("schema f64 type mismatch")),
+                _ => return Err(TwilicError::InvalidData("schema f64 type mismatch")),
             },
             "string" => match value {
                 Value::String(v) => {
@@ -994,11 +994,11 @@ impl RecurramCodec {
                         encode_string(v, out);
                     }
                 }
-                _ => return Err(RecurramError::InvalidData("schema string type mismatch")),
+                _ => return Err(TwilicError::InvalidData("schema string type mismatch")),
             },
             "binary" => match value {
                 Value::Binary(v) => encode_bytes(v, out),
-                _ => return Err(RecurramError::InvalidData("schema binary type mismatch")),
+                _ => return Err(TwilicError::InvalidData("schema binary type mismatch")),
             },
             _ => {
                 self.write_value(value, out);
@@ -1017,30 +1017,30 @@ impl RecurramCodec {
             "bool" => Ok(Value::Bool(match reader.read_u8()? {
                 0 => false,
                 1 => true,
-                _ => return Err(RecurramError::InvalidData("schema bool value")),
+                _ => return Err(TwilicError::InvalidData("schema bool value")),
             })),
             "u64" => {
                 let mode = reader.read_u8()?;
                 let value = if mode == 1 {
                     let (min, max) = field_u64_range(field)
-                        .ok_or(RecurramError::InvalidData("schema u64 range mode"))?;
+                        .ok_or(TwilicError::InvalidData("schema u64 range mode"))?;
                     let bits = range_bit_width_u64(min, max);
                     let offset = read_fixed_bits_u64(reader, bits)?;
                     let span = max.saturating_sub(min);
                     if offset > span {
-                        return Err(RecurramError::InvalidData("schema u64 range overflow"));
+                        return Err(TwilicError::InvalidData("schema u64 range overflow"));
                     }
                     let value = min
                         .checked_add(offset)
-                        .ok_or(RecurramError::InvalidData("schema u64 range overflow"))?;
+                        .ok_or(TwilicError::InvalidData("schema u64 range overflow"))?;
                     if value > max {
-                        return Err(RecurramError::InvalidData("schema u64 range overflow"));
+                        return Err(TwilicError::InvalidData("schema u64 range overflow"));
                     }
                     value
                 } else if mode == 0 {
                     read_smallest_u64(reader)?
                 } else {
-                    return Err(RecurramError::InvalidData("schema u64 mode"));
+                    return Err(TwilicError::InvalidData("schema u64 mode"));
                 };
                 Ok(Value::U64(value))
             }
@@ -1048,21 +1048,21 @@ impl RecurramCodec {
                 let mode = reader.read_u8()?;
                 let value = if mode == 1 {
                     let (min, max) = field_i64_range(field)
-                        .ok_or(RecurramError::InvalidData("schema i64 range mode"))?;
+                        .ok_or(TwilicError::InvalidData("schema i64 range mode"))?;
                     let bits = range_bit_width_i64(min, max);
                     let offset = read_fixed_bits_u64(reader, bits)?;
                     let span = i128::from(max) - i128::from(min);
                     if i128::from(offset) > span {
-                        return Err(RecurramError::InvalidData("schema i64 range overflow"));
+                        return Err(TwilicError::InvalidData("schema i64 range overflow"));
                     }
                     let value = i128::from(min) + i128::from(offset);
                     let value = i64::try_from(value)
-                        .map_err(|_| RecurramError::InvalidData("schema i64 range overflow"))?;
+                        .map_err(|_| TwilicError::InvalidData("schema i64 range overflow"))?;
                     value
                 } else if mode == 0 {
                     decode_zigzag(read_smallest_u64(reader)?)
                 } else {
-                    return Err(RecurramError::InvalidData("schema i64 mode"));
+                    return Err(TwilicError::InvalidData("schema i64 mode"));
                 };
                 Ok(Value::I64(value))
             }
@@ -1088,7 +1088,7 @@ impl RecurramCodec {
                         .ok_or_else(|| self.reference_error("inline_enum_code", code as u64))?;
                     Ok(Value::String(value))
                 } else {
-                    Err(RecurramError::InvalidData("schema string mode"))
+                    Err(TwilicError::InvalidData("schema string mode"))
                 }
             }
             "binary" => Ok(Value::Binary(reader.read_bytes()?)),
@@ -1118,7 +1118,7 @@ impl RecurramCodec {
                 Ok(KeyRef::Literal(key))
             }
             1 => Ok(KeyRef::Id(reader.read_varuint()?)),
-            _ => Err(RecurramError::InvalidData("key ref mode")),
+            _ => Err(TwilicError::InvalidData("key ref mode")),
         }
     }
 
@@ -1148,7 +1148,7 @@ impl RecurramCodec {
             2 => Ok(Some(
                 reader.read_bitmap()?.into_iter().map(|bit| !bit).collect(),
             )),
-            _ => Err(RecurramError::InvalidData("presence flag")),
+            _ => Err(TwilicError::InvalidData("presence flag")),
         }
     }
 
@@ -1186,14 +1186,14 @@ impl RecurramCodec {
         expected_codec: Option<VectorCodec>,
     ) -> Result<TypedVector> {
         let element_type = ElementType::from_byte(reader.read_u8()?)
-            .ok_or(RecurramError::InvalidData("element type"))?;
+            .ok_or(TwilicError::InvalidData("element type"))?;
         let expected_len = reader.read_varuint()? as usize;
         let codec = VectorCodec::from_byte(reader.read_u8()?)
-            .ok_or(RecurramError::InvalidData("vector codec"))?;
+            .ok_or(TwilicError::InvalidData("vector codec"))?;
         if let Some(expected) = expected_codec
             && codec != expected
         {
-            return Err(RecurramError::InvalidData("column codec mismatch"));
+            return Err(TwilicError::InvalidData("column codec mismatch"));
         }
         let data = match element_type {
             ElementType::Bool => TypedVectorData::Bool(reader.read_bitmap()?),
@@ -1219,7 +1219,7 @@ impl RecurramCodec {
             }
         };
         if typed_vector_len(&data) != expected_len {
-            return Err(RecurramError::InvalidData("typed vector length mismatch"));
+            return Err(TwilicError::InvalidData("typed vector length mismatch"));
         }
         Ok(TypedVector {
             element_type,
@@ -1236,7 +1236,7 @@ impl RecurramCodec {
                 let presence = column
                     .presence
                     .as_deref()
-                    .ok_or(RecurramError::InvalidData("missing column presence bitmap"))?;
+                    .ok_or(TwilicError::InvalidData("missing column presence bitmap"))?;
                 encode_bitmap(presence, out);
             }
             NullStrategy::None | NullStrategy::AllPresentElided => {}
@@ -1307,7 +1307,7 @@ impl RecurramCodec {
     fn read_column(&mut self, reader: &mut Reader<'_>) -> Result<Column> {
         let field_id = reader.read_varuint()?;
         let null_strategy = NullStrategy::from_byte(reader.read_u8()?)
-            .ok_or(RecurramError::InvalidData("null strategy"))?;
+            .ok_or(TwilicError::InvalidData("null strategy"))?;
         let presence = match null_strategy {
             NullStrategy::PresenceBitmap | NullStrategy::InvertedPresenceBitmap => {
                 Some(reader.read_bitmap()?)
@@ -1315,7 +1315,7 @@ impl RecurramCodec {
             NullStrategy::None | NullStrategy::AllPresentElided => None,
         };
         let codec =
-            VectorCodec::from_byte(reader.read_u8()?).ok_or(RecurramError::InvalidData("codec"))?;
+            VectorCodec::from_byte(reader.read_u8()?).ok_or(TwilicError::InvalidData("codec"))?;
         let has_dict = reader.read_u8()?;
         let dictionary_id = match has_dict {
             0 => None,
@@ -1333,10 +1333,10 @@ impl RecurramCodec {
                         let hash = reader.read_varuint()?;
                         let expires_at = reader.read_varuint()?;
                         let fallback = DictionaryFallback::from_byte(reader.read_u8()?)
-                            .ok_or(RecurramError::InvalidData("dictionary fallback"))?;
+                            .ok_or(TwilicError::InvalidData("dictionary fallback"))?;
                         let payload = reader.read_bytes()?;
                         if dictionary_payload_hash(&payload) != hash {
-                            return Err(RecurramError::InvalidData(
+                            return Err(TwilicError::InvalidData(
                                 "dictionary profile hash mismatch",
                             ));
                         }
@@ -1351,21 +1351,21 @@ impl RecurramCodec {
                             },
                         );
                     }
-                    _ => return Err(RecurramError::InvalidData("dictionary profile flag")),
+                    _ => return Err(TwilicError::InvalidData("dictionary profile flag")),
                 }
                 Some(id)
             }
-            _ => return Err(RecurramError::InvalidData("dictionary flag")),
+            _ => return Err(TwilicError::InvalidData("dictionary flag")),
         };
         let payload_mode = reader.read_u8()?;
         let values = if payload_mode == 0 {
             self.read_typed_vector(reader, Some(codec))?.data
         } else if payload_mode == 1 {
-            let dict_id = dictionary_id.ok_or(RecurramError::InvalidData(
+            let dict_id = dictionary_id.ok_or(TwilicError::InvalidData(
                 "trained dictionary block requires dict_id",
             ))?;
             if !matches!(codec, VectorCodec::Dictionary | VectorCodec::StringRef) {
-                return Err(RecurramError::InvalidData(
+                return Err(TwilicError::InvalidData(
                     "trained dictionary block requires string dictionary codec",
                 ));
             }
@@ -1379,7 +1379,7 @@ impl RecurramCodec {
             let values = decode_trained_dictionary_block(&block, &dictionary)?;
             TypedVectorData::String(values)
         } else {
-            return Err(RecurramError::InvalidData("column payload mode"));
+            return Err(TwilicError::InvalidData("column payload mode"));
         };
         Ok(Column {
             field_id,
@@ -1424,7 +1424,7 @@ impl RecurramCodec {
                     .shape_table
                     .register_with_id(*shape_id, literals.clone())
                 {
-                    return Err(RecurramError::InvalidData("shape id mismatch"));
+                    return Err(TwilicError::InvalidData("shape id mismatch"));
                 }
                 self.state.encode_shape_observations.insert(literals, 2);
             }
@@ -1464,7 +1464,7 @@ impl RecurramCodec {
 
     fn read_control(&mut self, reader: &mut Reader<'_>) -> Result<ControlMessage> {
         let op = ControlOpcode::from_byte(reader.read_u8()?)
-            .ok_or(RecurramError::InvalidData("control opcode"))?;
+            .ok_or(TwilicError::InvalidData("control opcode"))?;
         match op {
             ControlOpcode::RegisterKeys => {
                 let len = reader.read_varuint()? as usize;
@@ -1496,7 +1496,7 @@ impl RecurramCodec {
                     key_refs.push(key_ref);
                 }
                 if !self.state.shape_table.register_with_id(shape_id, keys) {
-                    return Err(RecurramError::InvalidData("shape id mismatch"));
+                    return Err(TwilicError::InvalidData("shape id mismatch"));
                 }
                 Ok(ControlMessage::RegisterShape {
                     shape_id,
@@ -1564,7 +1564,7 @@ impl RecurramCodec {
                 }
                 Ok(BaseRef::BaseId(id))
             }
-            _ => Err(RecurramError::InvalidData("base_ref kind")),
+            _ => Err(TwilicError::InvalidData("base_ref kind")),
         }
     }
 
@@ -1702,7 +1702,7 @@ impl RecurramCodec {
                     let id = reader.read_varuint()? as usize;
                     let value = dict
                         .get(id)
-                        .ok_or(RecurramError::InvalidData("string vector dictionary id"))?
+                        .ok_or(TwilicError::InvalidData("string vector dictionary id"))?
                         .clone();
                     values.push(value);
                 }
@@ -1721,7 +1721,7 @@ impl RecurramCodec {
                     let suffix = reader.read_string()?;
                     let prev = &values[idx - 1];
                     if prefix_len > prev.len() || !prev.is_char_boundary(prefix_len) {
-                        return Err(RecurramError::InvalidData("prefix_delta prefix_len"));
+                        return Err(TwilicError::InvalidData("prefix_delta prefix_len"));
                     }
                     let combined = format!("{}{}", &prev[..prefix_len], suffix);
                     values.push(combined);
@@ -1770,9 +1770,9 @@ impl RecurramCodec {
                         .value
                         .clone()
                         .or_else(|| literal_iter.next())
-                        .ok_or(RecurramError::InvalidData("patch replace missing value"))?;
+                        .ok_or(TwilicError::InvalidData("patch replace missing value"))?;
                     if idx >= fields.len() {
-                        return Err(RecurramError::InvalidData("patch field out of bounds"));
+                        return Err(TwilicError::InvalidData("patch field out of bounds"));
                     }
                     fields[idx] = value;
                 }
@@ -1781,15 +1781,15 @@ impl RecurramCodec {
                         .value
                         .clone()
                         .or_else(|| literal_iter.next())
-                        .ok_or(RecurramError::InvalidData("patch insert missing value"))?;
+                        .ok_or(TwilicError::InvalidData("patch insert missing value"))?;
                     if idx > fields.len() {
-                        return Err(RecurramError::InvalidData("patch insert out of bounds"));
+                        return Err(TwilicError::InvalidData("patch insert out of bounds"));
                     }
                     fields.insert(idx, value);
                 }
                 PatchOpcode::DeleteField => {
                     if idx >= fields.len() {
-                        return Err(RecurramError::InvalidData("patch delete out of bounds"));
+                        return Err(TwilicError::InvalidData("patch delete out of bounds"));
                     }
                     fields.remove(idx);
                 }
@@ -1798,13 +1798,13 @@ impl RecurramCodec {
                         .value
                         .clone()
                         .or_else(|| literal_iter.next())
-                        .ok_or(RecurramError::InvalidData("patch append missing value"))?;
+                        .ok_or(TwilicError::InvalidData("patch append missing value"))?;
                     if idx >= fields.len() {
-                        return Err(RecurramError::InvalidData("patch append out of bounds"));
+                        return Err(TwilicError::InvalidData("patch append out of bounds"));
                     }
                     match (&mut fields[idx], value) {
                         (Value::Array(dst), Value::Array(mut src)) => dst.append(&mut src),
-                        _ => return Err(RecurramError::InvalidData("patch append type mismatch")),
+                        _ => return Err(TwilicError::InvalidData("patch append type mismatch")),
                     }
                 }
                 PatchOpcode::TruncateVector => {
@@ -1812,19 +1812,19 @@ impl RecurramCodec {
                         .value
                         .clone()
                         .or_else(|| literal_iter.next())
-                        .ok_or(RecurramError::InvalidData("patch truncate missing value"))?;
+                        .ok_or(TwilicError::InvalidData("patch truncate missing value"))?;
                     if idx >= fields.len() {
-                        return Err(RecurramError::InvalidData("patch truncate out of bounds"));
+                        return Err(TwilicError::InvalidData("patch truncate out of bounds"));
                     }
                     let keep = match value {
                         Value::U64(v) => v as usize,
                         Value::I64(v) if v >= 0 => v as usize,
-                        _ => return Err(RecurramError::InvalidData("patch truncate count")),
+                        _ => return Err(TwilicError::InvalidData("patch truncate count")),
                     };
                     match &mut fields[idx] {
                         Value::Array(dst) => dst.truncate(keep),
                         _ => {
-                            return Err(RecurramError::InvalidData("patch truncate type mismatch"));
+                            return Err(TwilicError::InvalidData("patch truncate type mismatch"));
                         }
                     }
                 }
@@ -1833,9 +1833,9 @@ impl RecurramCodec {
                         .value
                         .clone()
                         .or_else(|| literal_iter.next())
-                        .ok_or(RecurramError::InvalidData("patch string op missing value"))?;
+                        .ok_or(TwilicError::InvalidData("patch string op missing value"))?;
                     if idx >= fields.len() {
-                        return Err(RecurramError::InvalidData("patch field out of bounds"));
+                        return Err(TwilicError::InvalidData("patch field out of bounds"));
                     }
                     fields[idx] = value;
                 }
@@ -1870,13 +1870,13 @@ impl RecurramCodec {
 
 #[derive(Debug, Clone)]
 pub struct SessionEncoder {
-    codec: RecurramCodec,
+    codec: TwilicCodec,
 }
 
 impl SessionEncoder {
     pub fn new(options: SessionOptions) -> Self {
         Self {
-            codec: RecurramCodec::with_options(options),
+            codec: TwilicCodec::with_options(options),
         }
     }
 
@@ -1904,7 +1904,7 @@ impl SessionEncoder {
                         if let Some(default) = &field.default_value {
                             fields.push(default.clone());
                         } else {
-                            return Err(RecurramError::InvalidData(
+                            return Err(TwilicError::InvalidData(
                                 "missing required schema field",
                             ));
                         }
@@ -2092,7 +2092,7 @@ fn schema_present_field_indices(schema: &Schema, presence: Option<&[bool]>) -> R
     if let Some(bits) = presence
         && bits.len() != optional_total
     {
-        return Err(RecurramError::InvalidData(
+        return Err(TwilicError::InvalidData(
             "schema optional presence length",
         ));
     }
@@ -2309,7 +2309,7 @@ fn supports_state_patch(base: &Message, current: &Message) -> bool {
 }
 
 fn encoded_size(message: &Message) -> usize {
-    let mut codec = RecurramCodec::default();
+    let mut codec = TwilicCodec::default();
     codec
         .encode_message(message)
         .map(|b| b.len())
@@ -2415,10 +2415,10 @@ fn entries_to_map(entries: Vec<MapEntry>, state: &SessionState) -> Result<Vec<(S
                 .get_value(id)
                 .ok_or(match state.options.unknown_reference_policy {
                     UnknownReferencePolicy::FailFast => {
-                        RecurramError::UnknownReference("key_id", id)
+                        TwilicError::UnknownReference("key_id", id)
                     }
                     UnknownReferencePolicy::StatelessRetry => {
-                        RecurramError::StatelessRetryRequired("key_id", id)
+                        TwilicError::StatelessRetryRequired("key_id", id)
                     }
                 })?
                 .to_string(),
@@ -2823,16 +2823,16 @@ fn range_bit_width_i64(min: i64, max: i64) -> u8 {
 
 fn write_fixed_bits_u64(value: u64, bits: u8, out: &mut Vec<u8>) -> Result<()> {
     if bits > 64 {
-        return Err(RecurramError::InvalidData("fixed bit width"));
+        return Err(TwilicError::InvalidData("fixed bit width"));
     }
     if bits == 0 {
         if value != 0 {
-            return Err(RecurramError::InvalidData("fixed bit width value overflow"));
+            return Err(TwilicError::InvalidData("fixed bit width value overflow"));
         }
         return Ok(());
     }
     if bits < 64 && (value >> bits) != 0 {
-        return Err(RecurramError::InvalidData("fixed bit width value overflow"));
+        return Err(TwilicError::InvalidData("fixed bit width value overflow"));
     }
     let byte_len = usize::from(bits).div_ceil(8);
     for idx in 0..byte_len {
@@ -2843,7 +2843,7 @@ fn write_fixed_bits_u64(value: u64, bits: u8, out: &mut Vec<u8>) -> Result<()> {
 
 fn read_fixed_bits_u64(reader: &mut Reader<'_>, bits: u8) -> Result<u64> {
     if bits > 64 {
-        return Err(RecurramError::InvalidData("fixed bit width"));
+        return Err(TwilicError::InvalidData("fixed bit width"));
     }
     if bits == 0 {
         return Ok(0);
@@ -2856,7 +2856,7 @@ fn read_fixed_bits_u64(reader: &mut Reader<'_>, bits: u8) -> Result<u64> {
     if bits < 64 {
         let mask = (1u64 << bits) - 1;
         if (value & !mask) != 0 {
-            return Err(RecurramError::InvalidData("fixed bit width trailing bits"));
+            return Err(TwilicError::InvalidData("fixed bit width trailing bits"));
         }
     }
     Ok(value)
@@ -2896,7 +2896,7 @@ fn read_smallest_u64(reader: &mut Reader<'_>) -> Result<u64> {
             b.copy_from_slice(reader.read_exact(8)?);
             Ok(u64::from_le_bytes(b))
         }
-        _ => Err(RecurramError::InvalidData("smallest-width integer size")),
+        _ => Err(TwilicError::InvalidData("smallest-width integer size")),
     }
 }
 
@@ -2935,7 +2935,7 @@ fn rle_decode_bytes(input: &[u8]) -> Result<Vec<u8>> {
         out.extend(std::iter::repeat_n(byte, len));
     }
     if !reader.is_eof() {
-        return Err(RecurramError::InvalidData(
+        return Err(TwilicError::InvalidData(
             "control stream rle trailing bytes",
         ));
     }
@@ -2992,7 +2992,7 @@ fn control_bitpack_decode_bytes(input: &[u8]) -> Result<Vec<u8>> {
             let packed = reader.read_exact(remaining)?;
             unpack_fixed_width_u8(packed, len, mode)
         }
-        _ => Err(RecurramError::InvalidData("control stream bitpack mode")),
+        _ => Err(TwilicError::InvalidData("control stream bitpack mode")),
     }
 }
 
@@ -3065,7 +3065,7 @@ fn control_huffman_decode_bytes(input: &[u8]) -> Result<Vec<u8>> {
                 let symbol = reader.read_u8()? as usize;
                 let freq = reader.read_varuint()?;
                 if freq > u32::MAX as u64 {
-                    return Err(RecurramError::InvalidData("control stream huffman freq"));
+                    return Err(TwilicError::InvalidData("control stream huffman freq"));
                 }
                 freqs[symbol] = freq as u32;
             }
@@ -3074,7 +3074,7 @@ fn control_huffman_decode_bytes(input: &[u8]) -> Result<Vec<u8>> {
                 return Ok(Vec::new());
             }
             let (nodes, root) = build_huffman_tree(&freqs)
-                .ok_or(RecurramError::InvalidData("control stream huffman tree"))?;
+                .ok_or(TwilicError::InvalidData("control stream huffman tree"))?;
             if let HuffNode::Leaf(symbol) = nodes[root] {
                 return Ok(std::iter::repeat_n(symbol, total).collect());
             }
@@ -3094,7 +3094,7 @@ fn control_huffman_decode_bytes(input: &[u8]) -> Result<Vec<u8>> {
                         }
                         HuffNode::Internal { left, right } => {
                             let byte = *bitstream.get(byte_idx).ok_or(
-                                RecurramError::InvalidData("control stream huffman underflow"),
+                                TwilicError::InvalidData("control stream huffman underflow"),
                             )?;
                             let bit = (byte >> bit_idx) & 1;
                             bit_idx += 1;
@@ -3110,20 +3110,20 @@ fn control_huffman_decode_bytes(input: &[u8]) -> Result<Vec<u8>> {
             if bit_idx > 0 && byte_idx < bitstream.len() {
                 let trailing_mask = !((1u8 << bit_idx) - 1);
                 if (bitstream[byte_idx] & trailing_mask) != 0 {
-                    return Err(RecurramError::InvalidData(
+                    return Err(TwilicError::InvalidData(
                         "control stream huffman trailing bits",
                     ));
                 }
                 byte_idx += 1;
             }
             if bitstream[byte_idx..].iter().any(|b| *b != 0) {
-                return Err(RecurramError::InvalidData(
+                return Err(TwilicError::InvalidData(
                     "control stream huffman trailing bits",
                 ));
             }
             Ok(out)
         }
-        _ => Err(RecurramError::InvalidData("control stream huffman mode")),
+        _ => Err(TwilicError::InvalidData("control stream huffman mode")),
     }
 }
 
@@ -3147,7 +3147,7 @@ fn control_fse_decode_bytes(input: &[u8]) -> Result<Vec<u8>> {
         1 => control_bitpack_decode_bytes(body),
         2 => control_huffman_decode_bytes(body),
         3 => control_fse_frame_decode(body),
-        _ => Err(RecurramError::InvalidData("control stream fse mode")),
+        _ => Err(TwilicError::InvalidData("control stream fse mode")),
     }
 }
 
@@ -3218,13 +3218,13 @@ fn control_fse_frame_decode(input: &[u8]) -> Result<Vec<u8>> {
     let mut reader = Reader::new(input);
     let table_log = reader.read_u8()?;
     if table_log == 0 || table_log > 12 {
-        return Err(RecurramError::InvalidData("control stream fse table log"));
+        return Err(TwilicError::InvalidData("control stream fse table log"));
     }
     let table_size = 1u32 << table_log;
     let len = reader.read_varuint()? as usize;
     let used = reader.read_varuint()? as usize;
     if used > 256 || used > table_size as usize {
-        return Err(RecurramError::InvalidData(
+        return Err(TwilicError::InvalidData(
             "control stream fse used symbols",
         ));
     }
@@ -3235,24 +3235,24 @@ fn control_fse_frame_decode(input: &[u8]) -> Result<Vec<u8>> {
     for _ in 0..used {
         let symbol = reader.read_u8()? as usize;
         if seen[symbol] {
-            return Err(RecurramError::InvalidData(
+            return Err(TwilicError::InvalidData(
                 "control stream fse duplicate symbol",
             ));
         }
         seen[symbol] = true;
         let freq = reader.read_varuint()?;
         if freq == 0 || freq > table_size as u64 {
-            return Err(RecurramError::InvalidData("control stream fse freq"));
+            return Err(TwilicError::InvalidData("control stream fse freq"));
         }
         let freq_u16 = u16::try_from(freq)
-            .map_err(|_| RecurramError::InvalidData("control stream fse freq"))?;
+            .map_err(|_| TwilicError::InvalidData("control stream fse freq"))?;
         freqs[symbol] = freq_u16;
         sum = sum
             .checked_add(u32::from(freq_u16))
-            .ok_or(RecurramError::InvalidData("control stream fse table sum"))?;
+            .ok_or(TwilicError::InvalidData("control stream fse table sum"))?;
     }
     if sum != table_size {
-        return Err(RecurramError::InvalidData("control stream fse table sum"));
+        return Err(TwilicError::InvalidData("control stream fse table sum"));
     }
 
     let mut cumul = [0u32; 256];
@@ -3276,7 +3276,7 @@ fn control_fse_frame_decode(input: &[u8]) -> Result<Vec<u8>> {
 
     let state = reader.read_varuint()?;
     if state > u64::from(u32::MAX) {
-        return Err(RecurramError::InvalidData("control stream fse state"));
+        return Err(TwilicError::InvalidData("control stream fse state"));
     }
     let mut state = state as u32;
 
@@ -3288,30 +3288,30 @@ fn control_fse_frame_decode(input: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(len);
     for _ in 0..len {
         let slot = (state & mask) as usize;
-        let symbol = *decode_table.get(slot).ok_or(RecurramError::InvalidData(
+        let symbol = *decode_table.get(slot).ok_or(TwilicError::InvalidData(
             "control stream fse decode table",
         ))?;
         out.push(symbol);
 
         let freq = u32::from(freqs[symbol as usize]);
         if freq == 0 {
-            return Err(RecurramError::InvalidData("control stream fse symbol freq"));
+            return Err(TwilicError::InvalidData("control stream fse symbol freq"));
         }
         let start = cumul[symbol as usize];
         let low = state & mask;
         let delta = low
             .checked_sub(start)
-            .ok_or(RecurramError::InvalidData("control stream fse state"))?;
+            .ok_or(TwilicError::InvalidData("control stream fse state"))?;
         let base = freq
             .checked_mul(state >> table_log)
-            .ok_or(RecurramError::InvalidData("control stream fse state"))?;
+            .ok_or(TwilicError::InvalidData("control stream fse state"))?;
         state = base
             .checked_add(delta)
-            .ok_or(RecurramError::InvalidData("control stream fse state"))?;
+            .ok_or(TwilicError::InvalidData("control stream fse state"))?;
 
         while state < FSE_STATE_LOWER_BOUND {
             if renorm_idx == 0 {
-                return Err(RecurramError::InvalidData("control stream fse underflow"));
+                return Err(TwilicError::InvalidData("control stream fse underflow"));
             }
             renorm_idx -= 1;
             state = (state << 8) | u32::from(renorm[renorm_idx]);
@@ -3319,7 +3319,7 @@ fn control_fse_frame_decode(input: &[u8]) -> Result<Vec<u8>> {
     }
 
     if renorm[..renorm_idx].iter().any(|byte| *byte != 0) {
-        return Err(RecurramError::InvalidData(
+        return Err(TwilicError::InvalidData(
             "control stream fse trailing bytes",
         ));
     }
@@ -3479,7 +3479,7 @@ fn unpack_fixed_width_u8(bytes: &[u8], len: usize, width: u8) -> Result<Vec<u8>>
     let mask = (1u32 << width) - 1;
     while out.len() < len {
         while acc_bits < width {
-            let b = *bytes.get(idx).ok_or(RecurramError::InvalidData(
+            let b = *bytes.get(idx).ok_or(TwilicError::InvalidData(
                 "control stream bitpack underflow",
             ))?;
             idx += 1;
@@ -3493,7 +3493,7 @@ fn unpack_fixed_width_u8(bytes: &[u8], len: usize, width: u8) -> Result<Vec<u8>>
     if idx < bytes.len() {
         let trailing_non_zero = bytes[idx..].iter().any(|b| *b != 0);
         if trailing_non_zero {
-            return Err(RecurramError::InvalidData(
+            return Err(TwilicError::InvalidData(
                 "control stream bitpack trailing bytes",
             ));
         }
@@ -3503,11 +3503,11 @@ fn unpack_fixed_width_u8(bytes: &[u8], len: usize, width: u8) -> Result<Vec<u8>>
 
 fn pack_fixed_width_u64(values: &[u64], width: u8, out: &mut Vec<u8>) -> Result<()> {
     if width > 64 {
-        return Err(RecurramError::InvalidData("fixed-width u64 bit width"));
+        return Err(TwilicError::InvalidData("fixed-width u64 bit width"));
     }
     if width == 0 {
         if values.iter().any(|value| *value != 0) {
-            return Err(RecurramError::InvalidData("fixed-width u64 value overflow"));
+            return Err(TwilicError::InvalidData("fixed-width u64 value overflow"));
         }
         return Ok(());
     }
@@ -3516,7 +3516,7 @@ fn pack_fixed_width_u64(values: &[u64], width: u8, out: &mut Vec<u8>) -> Result<
     let mut acc_bits = 0u32;
     for value in values {
         if width < 64 && (*value >> width) != 0 {
-            return Err(RecurramError::InvalidData("fixed-width u64 value overflow"));
+            return Err(TwilicError::InvalidData("fixed-width u64 value overflow"));
         }
         acc |= u128::from(*value) << acc_bits;
         acc_bits += u32::from(width);
@@ -3534,11 +3534,11 @@ fn pack_fixed_width_u64(values: &[u64], width: u8, out: &mut Vec<u8>) -> Result<
 
 fn unpack_fixed_width_u64(bytes: &[u8], len: usize, width: u8) -> Result<Vec<u64>> {
     if width > 64 {
-        return Err(RecurramError::InvalidData("fixed-width u64 bit width"));
+        return Err(TwilicError::InvalidData("fixed-width u64 bit width"));
     }
     if width == 0 {
         if bytes.iter().any(|byte| *byte != 0) {
-            return Err(RecurramError::InvalidData("fixed-width u64 trailing bytes"));
+            return Err(TwilicError::InvalidData("fixed-width u64 trailing bytes"));
         }
         return Ok(vec![0; len]);
     }
@@ -3556,7 +3556,7 @@ fn unpack_fixed_width_u64(bytes: &[u8], len: usize, width: u8) -> Result<Vec<u64
         while acc_bits < u32::from(width) {
             let byte = *bytes
                 .get(idx)
-                .ok_or(RecurramError::InvalidData("fixed-width u64 underflow"))?;
+                .ok_or(TwilicError::InvalidData("fixed-width u64 underflow"))?;
             idx += 1;
             acc |= u128::from(byte) << acc_bits;
             acc_bits += 8;
@@ -3566,7 +3566,7 @@ fn unpack_fixed_width_u64(bytes: &[u8], len: usize, width: u8) -> Result<Vec<u64
         acc_bits -= u32::from(width);
     }
     if acc != 0 || bytes[idx..].iter().any(|byte| *byte != 0) {
-        return Err(RecurramError::InvalidData("fixed-width u64 trailing bytes"));
+        return Err(TwilicError::InvalidData("fixed-width u64 trailing bytes"));
     }
     Ok(out)
 }
@@ -3642,17 +3642,17 @@ fn merge_template_columns(
             out.push(
                 changed_iter
                     .next()
-                    .ok_or(RecurramError::InvalidData("template changed column count"))?,
+                    .ok_or(TwilicError::InvalidData("template changed column count"))?,
             );
         } else {
             let base = previous
                 .get(idx)
-                .ok_or(RecurramError::InvalidData("template base column missing"))?;
+                .ok_or(TwilicError::InvalidData("template base column missing"))?;
             out.push(base.clone());
         }
     }
     if changed_iter.next().is_some() {
-        return Err(RecurramError::InvalidData(
+        return Err(TwilicError::InvalidData(
             "template changed column overflow",
         ));
     }
@@ -3667,7 +3667,7 @@ fn decode_trained_dictionary_payload(payload: &[u8]) -> Result<Vec<String>> {
         values.push(reader.read_string()?);
     }
     if !reader.is_eof() {
-        return Err(RecurramError::InvalidData(
+        return Err(TwilicError::InvalidData(
             "trained dictionary payload trailing bytes",
         ));
     }
@@ -3744,10 +3744,10 @@ fn decode_trained_dictionary_block(block: &[u8], dictionary: &[String]) -> Resul
             let packed = reader.read_exact(remaining)?;
             unpack_fixed_width_u64(packed, len, bit_width)?
         }
-        _ => return Err(RecurramError::InvalidData("trained dictionary block mode")),
+        _ => return Err(TwilicError::InvalidData("trained dictionary block mode")),
     };
     if !reader.is_eof() {
-        return Err(RecurramError::InvalidData(
+        return Err(TwilicError::InvalidData(
             "trained dictionary block trailing bytes",
         ));
     }
@@ -3755,11 +3755,11 @@ fn decode_trained_dictionary_block(block: &[u8], dictionary: &[String]) -> Resul
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
         let idx = usize::try_from(id)
-            .map_err(|_| RecurramError::InvalidData("trained dictionary block id"))?;
+            .map_err(|_| TwilicError::InvalidData("trained dictionary block id"))?;
         let value = dictionary
             .get(idx)
             .cloned()
-            .ok_or(RecurramError::InvalidData("trained dictionary block id"))?;
+            .ok_or(TwilicError::InvalidData("trained dictionary block id"))?;
         out.push(value);
     }
     Ok(out)
@@ -3880,9 +3880,9 @@ fn apply_state_patch_map(
                     .value
                     .clone()
                     .or_else(|| literal_iter.next())
-                    .ok_or(RecurramError::InvalidData("patch replace missing value"))?;
+                    .ok_or(TwilicError::InvalidData("patch replace missing value"))?;
                 if idx >= entries.len() {
-                    return Err(RecurramError::InvalidData("patch field out of bounds"));
+                    return Err(TwilicError::InvalidData("patch field out of bounds"));
                 }
                 entries[idx].value = value;
             }
@@ -3891,15 +3891,15 @@ fn apply_state_patch_map(
                     .value
                     .clone()
                     .or_else(|| literal_iter.next())
-                    .ok_or(RecurramError::InvalidData("patch insert missing value"))?;
+                    .ok_or(TwilicError::InvalidData("patch insert missing value"))?;
                 if idx > entries.len() {
-                    return Err(RecurramError::InvalidData("patch insert out of bounds"));
+                    return Err(TwilicError::InvalidData("patch insert out of bounds"));
                 }
                 entries.insert(idx, map_entry_from_patch_value(value)?);
             }
             PatchOpcode::DeleteField => {
                 if idx >= entries.len() {
-                    return Err(RecurramError::InvalidData("patch delete out of bounds"));
+                    return Err(TwilicError::InvalidData("patch delete out of bounds"));
                 }
                 entries.remove(idx);
             }
@@ -3908,13 +3908,13 @@ fn apply_state_patch_map(
                     .value
                     .clone()
                     .or_else(|| literal_iter.next())
-                    .ok_or(RecurramError::InvalidData("patch append missing value"))?;
+                    .ok_or(TwilicError::InvalidData("patch append missing value"))?;
                 if idx >= entries.len() {
-                    return Err(RecurramError::InvalidData("patch append out of bounds"));
+                    return Err(TwilicError::InvalidData("patch append out of bounds"));
                 }
                 match (&mut entries[idx].value, value) {
                     (Value::Array(dst), Value::Array(mut src)) => dst.append(&mut src),
-                    _ => return Err(RecurramError::InvalidData("patch append type mismatch")),
+                    _ => return Err(TwilicError::InvalidData("patch append type mismatch")),
                 }
             }
             PatchOpcode::TruncateVector => {
@@ -3922,18 +3922,18 @@ fn apply_state_patch_map(
                     .value
                     .clone()
                     .or_else(|| literal_iter.next())
-                    .ok_or(RecurramError::InvalidData("patch truncate missing value"))?;
+                    .ok_or(TwilicError::InvalidData("patch truncate missing value"))?;
                 if idx >= entries.len() {
-                    return Err(RecurramError::InvalidData("patch truncate out of bounds"));
+                    return Err(TwilicError::InvalidData("patch truncate out of bounds"));
                 }
                 let keep = match value {
                     Value::U64(v) => v as usize,
                     Value::I64(v) if v >= 0 => v as usize,
-                    _ => return Err(RecurramError::InvalidData("patch truncate count")),
+                    _ => return Err(TwilicError::InvalidData("patch truncate count")),
                 };
                 match &mut entries[idx].value {
                     Value::Array(dst) => dst.truncate(keep),
-                    _ => return Err(RecurramError::InvalidData("patch truncate type mismatch")),
+                    _ => return Err(TwilicError::InvalidData("patch truncate type mismatch")),
                 }
             }
         }
@@ -3943,12 +3943,12 @@ fn apply_state_patch_map(
 
 fn map_entry_from_patch_value(value: Value) -> Result<MapEntry> {
     let Value::Map(mut entries) = value else {
-        return Err(RecurramError::InvalidData(
+        return Err(TwilicError::InvalidData(
             "patch map insert requires single-entry map value",
         ));
     };
     if entries.len() != 1 {
-        return Err(RecurramError::InvalidData(
+        return Err(TwilicError::InvalidData(
             "patch map insert requires single-entry map value",
         ));
     }
@@ -4000,7 +4000,7 @@ fn rebuild_message_like(base: &Message, fields: Vec<Value>) -> Result<Message> {
         Message::Array(_) => Ok(Message::Array(fields)),
         Message::Map(entries) => {
             if fields.len() != entries.len() {
-                return Err(RecurramError::InvalidData(
+                return Err(TwilicError::InvalidData(
                     "patch map field count mismatch (insert/delete unsupported)",
                 ));
             }
@@ -4036,7 +4036,7 @@ fn rebuild_message_like(base: &Message, fields: Vec<Value>) -> Result<Message> {
                         .iter()
                         .map(|v| match v {
                             Value::Bool(b) => Ok(*b),
-                            _ => Err(RecurramError::InvalidData("typed bool patch")),
+                            _ => Err(TwilicError::InvalidData("typed bool patch")),
                         })
                         .collect::<Result<Vec<_>>>()?,
                 ),
@@ -4045,7 +4045,7 @@ fn rebuild_message_like(base: &Message, fields: Vec<Value>) -> Result<Message> {
                         .iter()
                         .map(|v| match v {
                             Value::I64(i) => Ok(*i),
-                            _ => Err(RecurramError::InvalidData("typed i64 patch")),
+                            _ => Err(TwilicError::InvalidData("typed i64 patch")),
                         })
                         .collect::<Result<Vec<_>>>()?,
                 ),
@@ -4054,7 +4054,7 @@ fn rebuild_message_like(base: &Message, fields: Vec<Value>) -> Result<Message> {
                         .iter()
                         .map(|v| match v {
                             Value::U64(i) => Ok(*i),
-                            _ => Err(RecurramError::InvalidData("typed u64 patch")),
+                            _ => Err(TwilicError::InvalidData("typed u64 patch")),
                         })
                         .collect::<Result<Vec<_>>>()?,
                 ),
@@ -4063,7 +4063,7 @@ fn rebuild_message_like(base: &Message, fields: Vec<Value>) -> Result<Message> {
                         .iter()
                         .map(|v| match v {
                             Value::F64(f) => Ok(*f),
-                            _ => Err(RecurramError::InvalidData("typed f64 patch")),
+                            _ => Err(TwilicError::InvalidData("typed f64 patch")),
                         })
                         .collect::<Result<Vec<_>>>()?,
                 ),
@@ -4072,7 +4072,7 @@ fn rebuild_message_like(base: &Message, fields: Vec<Value>) -> Result<Message> {
                         .iter()
                         .map(|v| match v {
                             Value::String(s) => Ok(s.clone()),
-                            _ => Err(RecurramError::InvalidData("typed string patch")),
+                            _ => Err(TwilicError::InvalidData("typed string patch")),
                         })
                         .collect::<Result<Vec<_>>>()?,
                 ),
@@ -4081,7 +4081,7 @@ fn rebuild_message_like(base: &Message, fields: Vec<Value>) -> Result<Message> {
                         .iter()
                         .map(|v| match v {
                             Value::Binary(b) => Ok(b.clone()),
-                            _ => Err(RecurramError::InvalidData("typed binary patch")),
+                            _ => Err(TwilicError::InvalidData("typed binary patch")),
                         })
                         .collect::<Result<Vec<_>>>()?,
                 ),
@@ -4100,7 +4100,7 @@ fn rebuild_message_like(base: &Message, fields: Vec<Value>) -> Result<Message> {
         | Message::StatePatch { .. }
         | Message::TemplateBatch { .. }
         | Message::ControlStream { .. }
-        | Message::BaseSnapshot { .. } => Err(RecurramError::InvalidData(
+        | Message::BaseSnapshot { .. } => Err(TwilicError::InvalidData(
             "state patch reconstruction unsupported for this message kind",
         )),
     }

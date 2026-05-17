@@ -1,7 +1,7 @@
-use recurram as recurram_rust;
+use twilic as twilic_rust;
 
-use recurram_rust::{
-    RecurramCodec, RecurramError, SessionEncoder,
+use twilic_rust::{
+    TwilicCodec, TwilicError, SessionEncoder,
     model::{
         BaseRef, Column, Message, MessageKind, NullStrategy, TypedVectorData, Value, VectorCodec,
     },
@@ -20,12 +20,12 @@ fn fnv1a64(input: &[u8]) -> u64 {
     hash
 }
 
-fn sample_schema() -> recurram_rust::model::Schema {
-    recurram_rust::model::Schema {
+fn sample_schema() -> twilic_rust::model::Schema {
+    twilic_rust::model::Schema {
         schema_id: 41,
         name: "User".to_string(),
         fields: vec![
-            recurram_rust::model::SchemaField {
+            twilic_rust::model::SchemaField {
                 number: 1,
                 name: "id".to_string(),
                 logical_type: "u64".to_string(),
@@ -35,7 +35,7 @@ fn sample_schema() -> recurram_rust::model::Schema {
                 max: Some(1100),
                 enum_values: vec![],
             },
-            recurram_rust::model::SchemaField {
+            twilic_rust::model::SchemaField {
                 number: 2,
                 name: "name".to_string(),
                 logical_type: "string".to_string(),
@@ -45,7 +45,7 @@ fn sample_schema() -> recurram_rust::model::Schema {
                 max: None,
                 enum_values: vec![],
             },
-            recurram_rust::model::SchemaField {
+            twilic_rust::model::SchemaField {
                 number: 3,
                 name: "score".to_string(),
                 logical_type: "i64".to_string(),
@@ -226,27 +226,27 @@ fn unknown_base_id_honors_stateless_retry_policy() {
     };
     let bytes = enc
         .decode_message(
-            &recurram_rust::RecurramCodec::with_options(SessionOptions::default())
+            &twilic_rust::TwilicCodec::with_options(SessionOptions::default())
                 .encode_message(&patch)
                 .expect("encode patch"),
         )
         .expect_err("should require retry");
     assert!(matches!(
         bytes,
-        RecurramError::StatelessRetryRequired("base_id", 12345)
+        TwilicError::StatelessRetryRequired("base_id", 12345)
     ));
 }
 
 #[test]
 fn state_patch_map_insert_and_delete_roundtrip_via_reconstruction() {
-    let mut codec = RecurramCodec::default();
+    let mut codec = TwilicCodec::default();
     let base = Message::Map(vec![
-        recurram_rust::model::MapEntry {
-            key: recurram_rust::model::KeyRef::Literal("id".to_string()),
+        twilic_rust::model::MapEntry {
+            key: twilic_rust::model::KeyRef::Literal("id".to_string()),
             value: Value::U64(1),
         },
-        recurram_rust::model::MapEntry {
-            key: recurram_rust::model::KeyRef::Literal("name".to_string()),
+        twilic_rust::model::MapEntry {
+            key: twilic_rust::model::KeyRef::Literal("name".to_string()),
             value: Value::String("alice".to_string()),
         },
     ]);
@@ -255,9 +255,9 @@ fn state_patch_map_insert_and_delete_roundtrip_via_reconstruction() {
 
     let insert_patch = Message::StatePatch {
         base_ref: BaseRef::Previous,
-        operations: vec![recurram_rust::model::PatchOperation {
+        operations: vec![twilic_rust::model::PatchOperation {
             field_id: 2,
-            opcode: recurram_rust::model::PatchOpcode::InsertField,
+            opcode: twilic_rust::model::PatchOpcode::InsertField,
             value: Some(Value::Map(vec![(
                 "role".to_string(),
                 Value::String("admin".to_string()),
@@ -283,9 +283,9 @@ fn state_patch_map_insert_and_delete_roundtrip_via_reconstruction() {
 
     let delete_patch = Message::StatePatch {
         base_ref: BaseRef::Previous,
-        operations: vec![recurram_rust::model::PatchOperation {
+        operations: vec![twilic_rust::model::PatchOperation {
             field_id: 2,
-            opcode: recurram_rust::model::PatchOpcode::DeleteField,
+            opcode: twilic_rust::model::PatchOpcode::DeleteField,
             value: None,
         }],
         literals: vec![],
@@ -346,7 +346,7 @@ fn trained_dictionary_profile_is_transported_to_fresh_decoder() {
         .collect();
     let bytes = enc.encode_batch(&rows).expect("encode batch");
 
-    let mut dec = RecurramCodec::default();
+    let mut dec = TwilicCodec::default();
     let decoded = dec.decode_message(&bytes).expect("decode batch");
     let Message::ColumnBatch { columns, .. } = decoded else {
         panic!("expected column batch")
@@ -386,7 +386,7 @@ fn trained_dictionary_profile_is_transported_to_fresh_decoder() {
 
 #[test]
 fn invalid_dictionary_profile_hash_is_rejected() {
-    let mut enc = RecurramCodec::default();
+    let mut enc = TwilicCodec::default();
     let dict_id = 42;
     let payload = vec![1, 2, 3, 4];
     enc.state.dictionaries.insert(dict_id, payload);
@@ -413,10 +413,10 @@ fn invalid_dictionary_profile_hash_is_rejected() {
     };
     let bytes = enc.encode_message(&msg).expect("encode column batch");
 
-    let mut dec = RecurramCodec::default();
+    let mut dec = TwilicCodec::default();
     assert!(matches!(
         dec.decode_message(&bytes),
-        Err(RecurramError::InvalidData(
+        Err(TwilicError::InvalidData(
             "dictionary profile hash mismatch"
         ))
     ));
@@ -425,7 +425,7 @@ fn invalid_dictionary_profile_hash_is_rejected() {
 #[test]
 fn trained_dictionary_reference_writes_compressed_block_after_dict_id() {
     let dict_id = 9;
-    let mut codec = RecurramCodec::default();
+    let mut codec = TwilicCodec::default();
     let mut payload = Vec::new();
     encode_varuint(2, &mut payload);
     encode_string("admin", &mut payload);
@@ -492,7 +492,7 @@ fn trained_dictionary_reference_writes_compressed_block_after_dict_id() {
     assert!(!compressed_block.is_empty());
     assert!(reader.is_eof());
 
-    let mut fresh = RecurramCodec::default();
+    let mut fresh = TwilicCodec::default();
     let decoded = fresh
         .decode_message(&bytes)
         .expect("decode with compressed block");

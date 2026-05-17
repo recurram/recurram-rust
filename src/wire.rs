@@ -1,4 +1,4 @@
-use crate::error::{RecurramError, Result};
+use crate::error::{TwilicError, Result};
 
 #[inline(always)]
 pub fn encode_varuint(mut value: u64, out: &mut Vec<u8>) {
@@ -79,7 +79,7 @@ impl<'a> Reader<'a> {
         let byte = *self
             .input
             .get(self.offset)
-            .ok_or(RecurramError::UnexpectedEof)?;
+            .ok_or(TwilicError::UnexpectedEof)?;
         self.offset += 1;
         Ok(byte)
     }
@@ -88,11 +88,11 @@ impl<'a> Reader<'a> {
         let end = self
             .offset
             .checked_add(len)
-            .ok_or(RecurramError::InvalidData("offset overflow"))?;
+            .ok_or(TwilicError::InvalidData("offset overflow"))?;
         let slice = self
             .input
             .get(self.offset..end)
-            .ok_or(RecurramError::UnexpectedEof)?;
+            .ok_or(TwilicError::UnexpectedEof)?;
         self.offset = end;
         Ok(slice)
     }
@@ -103,7 +103,7 @@ impl<'a> Reader<'a> {
         let mut result = 0u64;
         loop {
             if shift >= 64 {
-                return Err(RecurramError::InvalidData("varuint too large"));
+                return Err(TwilicError::InvalidData("varuint too large"));
             }
             let byte = self.read_u8()?;
             result |= ((byte & 0x7F) as u64) << shift;
@@ -127,7 +127,7 @@ impl<'a> Reader<'a> {
     pub fn read_string(&mut self) -> Result<String> {
         let len = self.read_varuint()? as usize;
         let bytes = self.read_exact(len)?;
-        let value = std::str::from_utf8(bytes).map_err(|_| RecurramError::Utf8Error)?;
+        let value = std::str::from_utf8(bytes).map_err(|_| TwilicError::Utf8Error)?;
         Ok(value.to_owned())
     }
 

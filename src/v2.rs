@@ -1,7 +1,7 @@
 use ahash::HashMap;
 
 use crate::{
-    error::{RecurramError, Result},
+    error::{TwilicError, Result},
     model::Value,
     wire::{Reader, encode_varuint},
 };
@@ -61,7 +61,7 @@ pub fn decode(bytes: &[u8]) -> Result<Value> {
     let mut state = DecodeState::default();
     let value = decode_value(&mut reader, &mut state)?;
     if !reader.is_eof() {
-        return Err(RecurramError::InvalidData("trailing bytes in v2 decode"));
+        return Err(TwilicError::InvalidData("trailing bytes in v2 decode"));
     }
     Ok(value)
 }
@@ -288,7 +288,7 @@ fn decode_value_from_tag(
             let len = (tag & 0x1F) as usize;
             let bytes = reader.read_exact(len)?;
             let s = std::str::from_utf8(bytes)
-                .map_err(|_| RecurramError::Utf8Error)?
+                .map_err(|_| TwilicError::Utf8Error)?
                 .to_string();
             state.strings.push(s.clone());
             Ok(Value::String(s))
@@ -388,7 +388,7 @@ fn decode_value_from_tag(
         STR_REF_TAG => {
             let id = reader.read_varuint()? as usize;
             let Some(value) = state.strings.get(id).cloned() else {
-                return Err(RecurramError::InvalidData("unknown str_ref id"));
+                return Err(TwilicError::InvalidData("unknown str_ref id"));
             };
             Ok(Value::String(value))
         }
@@ -396,7 +396,7 @@ fn decode_value_from_tag(
         tag if (0xb0..=0xbf).contains(&tag) => {
             decode_map_body(reader, state, (tag & 0x0f) as usize)
         }
-        _ => Err(RecurramError::InvalidTag(tag)),
+        _ => Err(TwilicError::InvalidTag(tag)),
     }
 }
 
@@ -417,7 +417,7 @@ fn decode_string_tag(reader: &mut Reader<'_>, state: &mut DecodeState, tag: u8) 
     };
     let bytes = reader.read_exact(len)?;
     let s = std::str::from_utf8(bytes)
-        .map_err(|_| RecurramError::Utf8Error)?
+        .map_err(|_| TwilicError::Utf8Error)?
         .to_string();
     state.strings.push(s.clone());
     Ok(Value::String(s))
@@ -475,7 +475,7 @@ fn decode_key(reader: &mut Reader<'_>, state: &mut DecodeState) -> Result<String
     if tag == KEY_REF_TAG {
         let id = reader.read_varuint()? as usize;
         let Some(value) = state.keys.get(id).cloned() else {
-            return Err(RecurramError::InvalidData("unknown key_ref id"));
+            return Err(TwilicError::InvalidData("unknown key_ref id"));
         };
         return Ok(value);
     }
@@ -483,19 +483,19 @@ fn decode_key(reader: &mut Reader<'_>, state: &mut DecodeState) -> Result<String
         let len = (tag & 0x1F) as usize;
         let bytes = reader.read_exact(len)?;
         let key = std::str::from_utf8(bytes)
-            .map_err(|_| RecurramError::Utf8Error)?
+            .map_err(|_| TwilicError::Utf8Error)?
             .to_string();
         state.keys.push(key.clone());
         return Ok(key);
     }
     if matches!(tag, STR8_TAG | STR16_TAG | STR32_TAG) {
         let Value::String(key) = decode_value_from_tag(reader, state, tag)? else {
-            return Err(RecurramError::InvalidData("expected string key"));
+            return Err(TwilicError::InvalidData("expected string key"));
         };
         state.keys.push(key.clone());
         return Ok(key);
     }
-    Err(RecurramError::InvalidData(
+    Err(TwilicError::InvalidData(
         "map key must be key_ref or string",
     ))
 }

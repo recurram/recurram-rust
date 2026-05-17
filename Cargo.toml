@@ -1,8 +1,8 @@
 [package]
-name = "recurram"
+name = "twilic"
 version = "2.0.0"
 edition = "2024"
-description = "Recurram: schema-aware wire format with stateful transport."
+description = "Twilic: schema-aware wire format with stateful transport."
 license = "MIT"
 
 [dependencies]

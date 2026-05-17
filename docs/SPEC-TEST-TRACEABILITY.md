@@ -1,6 +1,6 @@
 # SPEC Test Traceability (5/6/8/10/13/15/18)
 
-This file maps `recurram/SPEC.md` requirements to Rust tests in `recurram-rust/tests`.
+This file maps `twilic/SPEC.md` requirements to Rust tests in `twilic-rust/tests`.
 
 ## 5. Dynamic Profile
 

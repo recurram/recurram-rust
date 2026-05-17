@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed the project from Recurram to Twilic. Historical changelog entries still refer to Recurram and gowe where applicable.
+
 ### Added
 
 - GitHub issue templates (feature request and bug report) and pull request template.
@@ -50,5 +54,5 @@ Initial public release of the Rust implementation of Recurram.
 
 - Add missing crates.io package metadata (`description`, `license`) so `cargo publish` succeeds.
 
-[unreleased]: https://github.com/recurram/recurram-rust/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/recurram/recurram-rust/releases/tag/v0.1.0
+[unreleased]: https://github.com/twilic/twilic-rust/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/twilic/twilic-rust/releases/tag/v0.1.0
