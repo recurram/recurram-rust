@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - GitHub issue templates (feature request and bug report) and pull request template.
+- `CONTRIBUTING.md` and commitlint workflow for conventional commit messages on pull requests.
 
 ### Fixed
 
